@@ -1,0 +1,9 @@
+# Replace with your actual domain, or use :80 for HTTP-only
+:80 {
+    reverse_proxy bot:8080
+}
+
+# For production with a domain and automatic HTTPS:
+# yourdomain.com {
+#     reverse_proxy bot:8080
+# }
