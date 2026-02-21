@@ -20,7 +20,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-gemini-key")
 os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
 os.environ.setdefault(
     "DATABASE_URL",
-    "postgresql+asyncpg://bot:bot_password@localhost:5433/luxtick_test",
+    "postgresql+asyncpg://bot:your_very_secure_password_here@localhost:5433/luxtick_test",
 )
 os.environ.setdefault(
     "DATABASE_URL_READONLY",

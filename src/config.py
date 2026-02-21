@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # -- Models --
     conversational_model: str = "gpt-4o-mini"
     vision_model: str = "gpt-4o"
+    item_intelligence_model: str = "gpt-4o-mini"
+
+    # -- Feature Flags --
+    enable_item_intelligence: bool = True
 
     # -- Rate Limiting --
     rate_limit_per_minute: int = 20

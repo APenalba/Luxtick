@@ -15,6 +15,7 @@ from src.config import settings
 from src.db.models import Receipt, ReceiptItem, User
 from src.db.session import async_session
 from src.services.product import ProductMatcher
+from src.services.product_intelligence import ProductIntelligenceService
 from src.services.purchase import PurchaseService
 
 logger = logging.getLogger(__name__)
@@ -68,24 +69,49 @@ class ExtractedReceipt(BaseModel):
 # Vision extraction prompt
 # ---------------------------------------------------------------------------
 
-RECEIPT_EXTRACTION_PROMPT = """You are a receipt data extraction specialist. Analyze the provided receipt image and extract ALL information into the exact JSON structure specified below.
+RECEIPT_EXTRACTION_PROMPT = """You are an expert receipt OCR and data extraction specialist with 10+ years experience processing receipts from global retailers including Europe. You excel at accurately identifying logical line items even when products span multiple printed lines.
 
-## Instructions
+CRITICAL RULES - Follow EXACTLY to ensure perfect extraction:
 
-1. Extract the store/business name exactly as shown.
-2. Extract the purchase date in ISO format (YYYY-MM-DD). If the date format is ambiguous, use the most likely interpretation.
-3. Extract EVERY line item on the receipt including:
-   - Product name as printed
-   - Quantity (default 1 if not specified)
+1. **SINGLE ITEM PER ENTRY**: Products often wrap across 2-4 lines (e.g., "POWER MULTI [EXT: BLUETOOTH] 1"). Group ALL related lines into ONE logical item. Never split multi-line descriptions.
+
+2. **IGNORE NON-PRODUCT LINES**: Exclude:
+   - Store headers/names/numbers
+   - Phone numbers, addresses, barcodes
+   - Reference codes (e.g., "46098", "17.59")
+   - Tax/VAT lines, subtotals, totals
+   - Payment method lines
+   - Promo/disclaimers
+   - Timestamps, URLs
+   - Footer text like "RETURZ 30 JOURS"
+
+3. **STORE NAME**: Extract ONLY commercial brand (e.g., "Mediamarkt", "Cactus", "Aldi", "Lidl"). Remove S.L., S.A., city names, "City Market", phone numbers.
+
+4. **ITEM IDENTIFICATION**: A line item contains:
+   - Product description (possibly multi-line)
+   - Quantity (usually 1 if absent)
    - Unit price
-   - Total price for that line
-   - Any discount applied to that item
-4. Extract subtotal, tax, and total amounts.
-5. Identify the currency from symbols or context (default EUR).
-6. If any field cannot be confidently extracted, add a note to the confidence_notes array.
+   - Line total
 
-## Required JSON Schema
+   Example from similar receipt:
+   Input lines: "POWER MULTI [EXT: BLUETOOTH] 1"
+   → ONE item: name="POWER MULTI [EXT: BLUETOOTH]", qty=1, unit=17.59, total=17.59
 
+5. **NUMBERS ALIGNMENT**: Use visual/spatial alignment. Prices right-aligned, quantities before prices.
+
+6. **DATE**: Parse European format DD.MM.YYYY from footer/header. Use most likely: 25.02.2024 → "2024-02-25"
+
+7. **AMBIGUOUS**: Use null + note in confidence_notes.
+
+## STEP-BY-STEP PROCESS:
+1. Scan receipt top-to-bottom
+2. Identify header (store, date)
+3. Locate product section (indented/multi-line descriptions)
+4. Group each logical product + qty + price + total → 1 item
+5. Find subtotal/tax/total lines
+6. Extract footer info
+
+## REQUIRED JSON OUTPUT - EXACTLY (no extra text):
 ```json
 {
   "store_name": "string",
@@ -110,7 +136,23 @@ RECEIPT_EXTRACTION_PROMPT = """You are a receipt data extraction specialist. Ana
 }
 ```
 
-Return ONLY the JSON object, no markdown formatting, no extra text."""
+## EXAMPLE 1 - Multi-line item:
+Receipt lines:
+```
+COCA COLA
+ZERO 33CL
+1   1.29   1.29
+```
+→ {"name": "COCA COLA ZERO 33CL", "quantity":1.0, "unit_price":1.29, "total_price":1.29}
+
+## EXAMPLE 2 - Reference code exclusion:
+```
+REF: 123456
+CHIPS 2PK  2.49  2.49
+```
+→ Ignore REF, extract only CHIPS item.
+
+ANALYZE THIS RECEIPT IMAGE AND OUTPUT ONLY VALID JSON."""
 
 
 class ReceiptParser:
@@ -119,6 +161,7 @@ class ReceiptParser:
     def __init__(self) -> None:
         self.product_matcher = ProductMatcher()
         self.purchase_service = PurchaseService()
+        self.intelligence_service = ProductIntelligenceService()
 
     async def extract_from_image(self, image_data: bytes) -> ExtractedReceipt:
         """Send a receipt image to GPT-4o vision and extract structured data.
@@ -203,6 +246,9 @@ class ReceiptParser:
         """
         # Step 1: Extract structured data from the image
         extracted = await self.extract_from_image(image_data)
+        intelligence_map = await self.intelligence_service.enrich_items(
+            [item.name for item in extracted.items]
+        )
 
         # Step 2: Store in database
         async with async_session() as session:
@@ -234,7 +280,9 @@ class ReceiptParser:
             matched_items: list[dict[str, Any]] = []
             for item in extracted.items:
                 product, is_new = await self.product_matcher.find_or_create_product(
-                    item.name, session
+                    item.name,
+                    session,
+                    item_intelligence=intelligence_map.get(item.name),
                 )
 
                 receipt_item = ReceiptItem(
