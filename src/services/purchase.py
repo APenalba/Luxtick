@@ -10,9 +10,11 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.db.models import Receipt, ReceiptItem, Store
+from src.config import settings
+from src.db.models import Category, Product, Receipt, ReceiptItem, Store
 from src.db.session import async_session
-from src.services.product import ProductMatcher
+from src.services.product import ProductMatcher, ProductResolver
+from src.services.product_intelligence import ProductIntelligenceService
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,8 @@ class PurchaseService:
 
     def __init__(self) -> None:
         self.product_matcher = ProductMatcher()
+        self.product_resolver = ProductResolver()
+        self.intelligence_service = ProductIntelligenceService()
 
     async def search_purchases(
         self,
@@ -98,10 +102,31 @@ class PurchaseService:
 
             # Apply filters
             if query:
-                stmt = stmt.where(ReceiptItem.name_on_receipt.ilike(f"%{query}%"))
+                if settings.enable_item_intelligence:
+                    resolved = await self.product_resolver.resolve_products(
+                        query, session
+                    )
+                    if resolved.product_ids:
+                        stmt = stmt.where(
+                            ReceiptItem.product_id.in_(resolved.product_ids)
+                        )
+                    else:
+                        stmt = stmt.where(
+                            ReceiptItem.name_on_receipt.ilike(f"%{query}%")
+                        )
+                else:
+                    stmt = stmt.where(ReceiptItem.name_on_receipt.ilike(f"%{query}%"))
             if store:
                 stmt = stmt.where(
                     Store.normalized_name.ilike(f"%{_normalize_store_name(store)}%")
+                )
+            if category:
+                stmt = (
+                    stmt.join(
+                        Product, ReceiptItem.product_id == Product.id, isouter=True
+                    )
+                    .join(Category, Product.category_id == Category.id, isouter=True)
+                    .where(Category.name.ilike(f"%{category.strip()}%"))
                 )
             if start_date:
                 stmt = stmt.where(
@@ -143,13 +168,24 @@ class PurchaseService:
     ) -> dict[str, Any]:
         """Get full purchase history for a specific product."""
         async with async_session() as session:
+            if settings.enable_item_intelligence:
+                resolved = await self.product_resolver.resolve_products(
+                    product, session
+                )
+                if resolved.product_ids:
+                    product_filter = ReceiptItem.product_id.in_(resolved.product_ids)
+                else:
+                    product_filter = ReceiptItem.name_on_receipt.ilike(f"%{product}%")
+            else:
+                product_filter = ReceiptItem.name_on_receipt.ilike(f"%{product}%")
+
             stmt = (
                 select(ReceiptItem)
                 .join(Receipt, ReceiptItem.receipt_id == Receipt.id)
                 .where(
                     and_(
                         Receipt.user_id == user_id,
-                        ReceiptItem.name_on_receipt.ilike(f"%{product}%"),
+                        product_filter,
                     )
                 )
                 .options(
@@ -191,6 +227,10 @@ class PurchaseService:
         p_date = _parse_date(purchase_date)
 
         async with async_session() as session:
+            intelligence_map = await self.intelligence_service.enrich_items(
+                [item["name"] for item in items]
+            )
+
             # Find or create store
             store = await self._get_or_create_store(store_name, session)
 
@@ -208,7 +248,9 @@ class PurchaseService:
 
                 # Match to canonical product
                 product, _ = await self.product_matcher.find_or_create_product(
-                    item_data["name"], session
+                    item_data["name"],
+                    session,
+                    item_intelligence=intelligence_map.get(item_data["name"]),
                 )
 
                 receipt_items.append(

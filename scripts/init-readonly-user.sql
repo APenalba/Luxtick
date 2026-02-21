@@ -7,9 +7,8 @@
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'bot_readonly') THEN
-        -- IMPORTANT: Set READONLY_PASSWORD env var before running this script
-        -- Default for development only - CHANGE IN PRODUCTION
-        CREATE ROLE bot_readonly WITH LOGIN PASSWORD COALESCE(current_setting('app.readonly_password', true), 'readonly_password');
+        -- CHANGE IN PRODUCTION
+        CREATE ROLE bot_readonly WITH LOGIN PASSWORD 'your_very_secure_password_here';
     END IF;
 END
 $$;

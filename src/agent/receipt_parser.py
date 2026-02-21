@@ -15,6 +15,7 @@ from src.config import settings
 from src.db.models import Receipt, ReceiptItem, User
 from src.db.session import async_session
 from src.services.product import ProductMatcher
+from src.services.product_intelligence import ProductIntelligenceService
 from src.services.purchase import PurchaseService
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ CRITICAL RULES - Follow EXACTLY to ensure perfect extraction:
    - Quantity (usually 1 if absent)
    - Unit price
    - Line total
-   
+
    Example from similar receipt:
    Input lines: "POWER MULTI [EXT: BLUETOOTH] 1"
    → ONE item: name="POWER MULTI [EXT: BLUETOOTH]", qty=1, unit=17.59, total=17.59
@@ -160,6 +161,7 @@ class ReceiptParser:
     def __init__(self) -> None:
         self.product_matcher = ProductMatcher()
         self.purchase_service = PurchaseService()
+        self.intelligence_service = ProductIntelligenceService()
 
     async def extract_from_image(self, image_data: bytes) -> ExtractedReceipt:
         """Send a receipt image to GPT-4o vision and extract structured data.
@@ -244,6 +246,9 @@ class ReceiptParser:
         """
         # Step 1: Extract structured data from the image
         extracted = await self.extract_from_image(image_data)
+        intelligence_map = await self.intelligence_service.enrich_items(
+            [item.name for item in extracted.items]
+        )
 
         # Step 2: Store in database
         async with async_session() as session:
@@ -275,7 +280,9 @@ class ReceiptParser:
             matched_items: list[dict[str, Any]] = []
             for item in extracted.items:
                 product, is_new = await self.product_matcher.find_or_create_product(
-                    item.name, session
+                    item.name,
+                    session,
+                    item_intelligence=intelligence_map.get(item.name),
                 )
 
                 receipt_item = ReceiptItem(

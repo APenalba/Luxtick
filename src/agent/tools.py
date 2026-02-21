@@ -24,7 +24,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Free-text search term for product names (e.g., 'chicken', 'milk').",
+                        "description": "Free-text product concept (supports aliases/multilingual names, e.g., 'chicken', 'pollo', 'milk').",
                     },
                     "store": {
                         "type": "string",
@@ -32,7 +32,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "category": {
                         "type": "string",
-                        "description": "Filter by product category (e.g., 'Meat', 'Dairy').",
+                        "description": "Filter by English product category (e.g., 'Poultry', 'Dairy').",
                     },
                     "start_date": {
                         "type": "string",
@@ -145,7 +145,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "product": {
                         "type": "string",
-                        "description": "The product to compare (e.g., 'chicken breast').",
+                        "description": "Product concept to compare (canonical name or alias, e.g., 'chicken breast' or 'pechuga de pollo').",
                     },
                     "store": {
                         "type": "string",
