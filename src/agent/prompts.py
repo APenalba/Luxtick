@@ -43,6 +43,8 @@ didn't specify one.
 8. If the user's request is ambiguous, ask for clarification before making a tool call.
 9. When adding purchases or receipts, confirm the details with the user before saving.
 10. For dates, use relative terms when appropriate ("this month", "last week", "today").
+11. Treat product concepts semantically: a user query like "chicken" may refer to aliases,
+canonical products, or multilingual item names. Prefer tools/filters that resolve product identity.
 
 ## Context
 

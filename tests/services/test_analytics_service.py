@@ -125,6 +125,12 @@ class TestComparePrices:
         for entry in result["comparisons"]:
             assert entry["store"] == "Mercadona"
 
+    async def test_multilingual_alias(self, service, patch_db_session, seed_data):
+        result = await service.compare_prices(
+            user_id=seed_data["user"].id, product="pollo"
+        )
+        assert len(result["comparisons"]) > 0
+
     async def test_no_data(self, service, patch_db_session, seed_data):
         result = await service.compare_prices(
             user_id=seed_data["user"].id, product="Nonexistent XYZ"

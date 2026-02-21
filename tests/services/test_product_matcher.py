@@ -3,6 +3,7 @@
 import pytest
 
 from src.services.product import ProductMatcher
+from src.services.product_intelligence import ItemIntelligence
 from tests.factories import make_product
 
 pytestmark = [pytest.mark.service, pytest.mark.asyncio]
@@ -93,3 +94,20 @@ class TestProductMatcher:
         product, is_new = await matcher.find_or_create_product("leche", db_session)
         assert is_new is False
         assert len(product.aliases or []) == original_count
+
+    async def test_create_with_intelligence_sets_category(self, matcher, db_session):
+        intelligence = ItemIntelligence(
+            source_name="pechuga de pollo",
+            canonical_name_en="Chicken Breast",
+            aliases_en=["Chicken Breast", "Chicken Fillet"],
+            category_path_en="Food > Poultry",
+            confidence=0.95,
+        )
+        product, is_new = await matcher.find_or_create_product(
+            "pechuga de pollo",
+            db_session,
+            item_intelligence=intelligence,
+        )
+        assert is_new is True
+        assert product.canonical_name == "Chicken Breast"
+        assert product.category_id is not None

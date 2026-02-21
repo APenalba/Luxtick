@@ -90,15 +90,6 @@ class TestAddManualPurchase:
 
 
 class TestSearchPurchases:
-    async def test_by_product_name(self, patch_db_session, db_session, seed_data):
-        service = PurchaseService()
-        result = await service.search_purchases(
-            user_id=seed_data["user"].id, query="Chicken"
-        )
-        assert result["count"] > 0
-        for item in result["results"]:
-            assert "chicken" in item["product"].lower()
-
     async def test_by_store(self, patch_db_session, db_session, seed_data):
         service = PurchaseService()
         result = await service.search_purchases(
@@ -128,6 +119,28 @@ class TestSearchPurchases:
         for item in result["results"]:
             assert "chicken" in item["product"].lower()
             assert item["store"] == "Mercadona"
+
+    async def test_semantic_query_matches_aliases(
+        self, patch_db_session, db_session, seed_data
+    ):
+        service = PurchaseService()
+        result = await service.search_purchases(
+            user_id=seed_data["user"].id,
+            query="chicken",
+        )
+        assert result["count"] > 0
+        names = {item["product"] for item in result["results"]}
+        assert any(
+            "chicken" in name.lower() or "pech pollo" in name.lower() for name in names
+        )
+
+    async def test_category_filter(self, patch_db_session, db_session, seed_data):
+        service = PurchaseService()
+        result = await service.search_purchases(
+            user_id=seed_data["user"].id,
+            category="Poultry",
+        )
+        assert result["count"] > 0
 
     async def test_empty_result(self, patch_db_session, db_session, seed_data):
         service = PurchaseService()

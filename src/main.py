@@ -12,7 +12,8 @@ from aiohttp import web
 
 from src.bot.router import setup_dispatcher
 from src.config import settings
-from src.db.session import close_engines
+from src.db.session import async_session, close_engines
+from src.services.category_taxonomy import ensure_default_categories
 
 # Configure logging
 logging.basicConfig(
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 async def on_startup(bot: Bot) -> None:
     """Called when the bot starts up."""
+    async with async_session() as session:
+        await ensure_default_categories(session)
+        await session.commit()
+
     if settings.is_webhook_mode:
         await bot.set_webhook(
             url=f"{settings.bot_webhook_url}/webhook",

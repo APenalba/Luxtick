@@ -9,6 +9,7 @@ from sqlalchemy import and_, func, select
 
 from src.db.models import Category, Product, Receipt, ReceiptItem, Store
 from src.db.session import async_session
+from src.services.product import ProductResolver
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,9 @@ def _resolve_date_range(
 class AnalyticsService:
     """Service for spending analytics and summaries."""
 
+    def __init__(self) -> None:
+        self.product_resolver = ProductResolver()
+
     async def get_spending_summary(
         self,
         user_id: uuid.UUID,
@@ -79,14 +83,28 @@ class AnalyticsService:
                 )
 
             # Total spending
-            total_stmt = (
-                select(
-                    func.sum(Receipt.total_amount).label("total"),
-                    func.count(Receipt.id).label("receipt_count"),
+            if category:
+                total_stmt = (
+                    select(
+                        func.sum(ReceiptItem.total_price).label("total"),
+                        func.count(func.distinct(Receipt.id)).label("receipt_count"),
+                    )
+                    .join(Receipt, ReceiptItem.receipt_id == Receipt.id)
+                    .join(Store, Receipt.store_id == Store.id, isouter=True)
+                    .join(Product, ReceiptItem.product_id == Product.id, isouter=True)
+                    .join(Category, Product.category_id == Category.id, isouter=True)
+                    .where(and_(*base_filters))
+                    .where(Category.name.ilike(f"%{category.strip()}%"))
                 )
-                .join(Store, Receipt.store_id == Store.id, isouter=True)
-                .where(and_(*base_filters))
-            )
+            else:
+                total_stmt = (
+                    select(
+                        func.sum(Receipt.total_amount).label("total"),
+                        func.count(Receipt.id).label("receipt_count"),
+                    )
+                    .join(Store, Receipt.store_id == Store.id, isouter=True)
+                    .where(and_(*base_filters))
+                )
             total_result = await session.execute(total_stmt)
             total_row = total_result.one()
             total_amount = float(total_row.total or 0)
@@ -102,7 +120,7 @@ class AnalyticsService:
                 )
             elif group_by == "product":
                 breakdown = await self._group_by_product(
-                    session, user_id, d_start, d_end, store
+                    session, user_id, d_start, d_end, store, category
                 )
             elif group_by in ("day", "week", "month"):
                 breakdown = await self._group_by_time(session, base_filters, group_by)
@@ -191,12 +209,17 @@ class AnalyticsService:
         d_start: date | None,
         d_end: date | None,
         store: str | None = None,
+        category: str | None = None,
     ) -> list[dict[str, Any]]:
         filters = [Receipt.user_id == user_id]
         if d_start:
             filters.append(Receipt.purchase_date >= d_start)
         if d_end:
             filters.append(Receipt.purchase_date <= d_end)
+        if store:
+            filters.append(Store.normalized_name.ilike(f"%{store.strip().lower()}%"))
+        if category:
+            filters.append(Category.name.ilike(f"%{category.strip()}%"))
 
         stmt = (
             select(
@@ -208,7 +231,9 @@ class AnalyticsService:
                 func.count(ReceiptItem.id).label("purchase_count"),
             )
             .join(Receipt, ReceiptItem.receipt_id == Receipt.id)
+            .join(Store, Receipt.store_id == Store.id, isouter=True)
             .join(Product, ReceiptItem.product_id == Product.id, isouter=True)
+            .join(Category, Product.category_id == Category.id, isouter=True)
             .where(and_(*filters))
             .group_by(Product.canonical_name, ReceiptItem.name_on_receipt)
             .order_by(func.sum(ReceiptItem.total_price).desc())
@@ -321,10 +346,13 @@ class AnalyticsService:
         d_start, d_end = _resolve_date_range(period or "last_3_months", None, None)
 
         async with async_session() as session:
-            filters = [
-                Receipt.user_id == user_id,
-                ReceiptItem.name_on_receipt.ilike(f"%{product}%"),
-            ]
+            resolved = await self.product_resolver.resolve_products(product, session)
+            if resolved.product_ids:
+                product_filter = ReceiptItem.product_id.in_(resolved.product_ids)
+            else:
+                product_filter = ReceiptItem.name_on_receipt.ilike(f"%{product}%")
+
+            filters = [Receipt.user_id == user_id, product_filter]
             if d_start:
                 filters.append(Receipt.purchase_date >= d_start)
             if d_end:
